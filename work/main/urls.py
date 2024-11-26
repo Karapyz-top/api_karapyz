@@ -42,7 +42,7 @@ urlpatterns = [
 
     path('projects/filter/symbol/', ProjectSymbolFilterView.as_view(), name='filter-symbol'),
     path('projects/<int:project_id>/tasks/filter/', ProjectTaskFilterView.as_view(), name='project-task-filter'),
-    path('projects/sort/date/', ProjectDateSortView.as_view(), name='project-date-sort'),
+    path('projects/filter/date/', ProjectDateRangeFilterView.as_view(), name='project-date-sort'),
 
 
     path('ws/notifications/', NotificationsConsumer.as_asgi(), name='ws-notifications'),

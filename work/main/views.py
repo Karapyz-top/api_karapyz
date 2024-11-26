@@ -1,4 +1,5 @@
 from datetime import datetime
+from django.db.models.functions import Lower
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework.generics import get_object_or_404
@@ -9,14 +10,13 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status, generics
 from django.shortcuts import get_object_or_404
-from django.views.decorators.csrf import csrf_exempt
-from django.views.decorators.http import require_http_methods
 from channels.layers import get_channel_layer
 from asgiref.sync import async_to_sync
-import json
 from .models import Task, UserAPI
-
-
+from rest_framework.filters import OrderingFilter
+from django_filters.rest_framework import DjangoFilterBackend
+from .serializers import TaskSerializer
+from django.db.models import Q
 
 @api_view(['GET', 'POST'])
 @permission_classes([IsAuthenticated])
@@ -203,7 +203,7 @@ def add_participant(request, project_id):
     serializer = ProjectParticipantSerializer(data=request.data)
     if serializer.is_valid():
         participant = serializer.save(project=project)
-        print(f"Добавление участника с user_id={participant.user.id}")  # Отладка
+        print(f"Добавление участника с user_id={participant.user.id}")
 
         send_websocket_notification(
             user_id=participant.user.id,
@@ -230,7 +230,7 @@ def assign_user_to_task(request, task_id):
     task.assigned_to = user
     task.save()
 
-    # Отправка WebSocket уведомления
+
     channel_layer = get_channel_layer()
     async_to_sync(channel_layer.group_send)(
         f"user_{user_id}",
@@ -770,9 +770,10 @@ class ProjectSymbolFilterView(APIView):
         return Response(serializer.data, status=status.HTTP_200_OK)
 
 
+
 class ProjectTaskFilterView(APIView):
     """
-    Фильтрация задач проекта по дате создания, обновления или дедлайну.
+    Фильтрация задач проекта по дате создания, обновления или дедлайну с сортировкой.
 
     GET:
     Параметры:
@@ -780,6 +781,7 @@ class ProjectTaskFilterView(APIView):
     - filter_by (str): Поле для фильтрации ("created", "updated" или "deadline"). По умолчанию "created".
     - start_date (str): Начальная дата фильтрации в формате YYYY-MM-DD.
     - end_date (str): Конечная дата фильтрации в формате YYYY-MM-DD.
+    - order (str): Направление сортировки ("asc" или "desc"). По умолчанию "asc".
 
     Ответы:
     - 200: Список задач, соответствующих критериям фильтрации.
@@ -787,26 +789,40 @@ class ProjectTaskFilterView(APIView):
     """
 
     def get(self, request, project_id, *args, **kwargs):
-
+        # Получение параметров фильтрации
         filter_by = request.query_params.get('filter_by', 'created')
         start_date = request.query_params.get('start_date')
         end_date = request.query_params.get('end_date')
+        order = request.query_params.get('order', 'asc')
 
+        # Проверка корректности параметров
         if filter_by not in ['created', 'updated', 'deadline']:
-            return Response({"error": "Invalid filter_by parameter. Use 'created', 'updated', or 'deadline'."},
-                            status=status.HTTP_400_BAD_REQUEST)
+            return Response(
+                {"error": "Invalid filter_by parameter. Use 'created', 'updated', or 'deadline'."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
         if not (start_date and end_date):
-            return Response({"error": "Both start_date and end_date parameters are required."},
-                            status=status.HTTP_400_BAD_REQUEST)
+            return Response(
+                {"error": "Both start_date and end_date parameters are required."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if order not in ['asc', 'desc']:
+            return Response(
+                {"error": "Invalid order parameter. Use 'asc' or 'desc'."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
+        # Преобразование дат в объект datetime
         try:
-
             start_date = datetime.strptime(start_date, "%Y-%m-%d").date()
             end_date = datetime.strptime(end_date, "%Y-%m-%d").date()
         except ValueError:
-            return Response({"error": "Invalid date format. Use YYYY-MM-DD."},
-                            status=status.HTTP_400_BAD_REQUEST)
+            return Response(
+                {"error": "Invalid date format. Use YYYY-MM-DD."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
+        # Карта для полей сортировки
         field_map = {
             'created': 'created_at',
             'updated': 'updated_at',
@@ -814,37 +830,54 @@ class ProjectTaskFilterView(APIView):
         }
         filter_field = field_map.get(filter_by)
 
-        tasks = Task.objects.filter(
-            project_id=project_id,
-            **{f"{filter_field}__range": (start_date, end_date)}
-        )
+        # Направление сортировки
+        sort_order = '' if order == 'asc' else '-'
 
+        # Фильтрация задач по проекту, дате и сортировке
+        tasks = Task.objects.filter(
+            Q(project_id=project_id) & Q(**{f"{filter_field}__range": (start_date, end_date)})
+        ).order_by(f"{sort_order}{filter_field}")
+
+        # Сериализация и отправка ответа
         serializer = TaskSerializer(tasks, many=True)
         return Response(serializer.data, status=status.HTTP_200_OK)
 
 
-class ProjectDateSortView(APIView):
+
+
+class ProjectDateRangeFilterView(APIView):
     """
-    Сортировка проектов по дате создания.
+    Фильтрация проектов по дате создания в указанном диапазоне.
 
     GET:
     Параметры:
-    - order (str): Направление сортировки ("asc" для восходящей или "desc" для нисходящей).
+    - start_date (str): Начальная дата в формате YYYY-MM-DD.
+    - end_date (str): Конечная дата в формате YYYY-MM-DD.
 
     Ответы:
-    - 200: Список отсортированных проектов.
-    - 400: Ошибка в параметрах запроса.
+    - 200: Список проектов, соответствующих диапазону дат.
+    - 400: Ошибка в параметрах запроса (например, некорректный формат даты).
     """
 
     def get(self, request, *args, **kwargs):
-        order = request.query_params.get('order')
+        start_date = request.query_params.get('start_date')
+        end_date = request.query_params.get('end_date')
 
-        if order not in ["asc", "desc"]:
-            return Response({"error": "Invalid order parameter. Use 'asc' or 'desc'."},
+
+
+        if not start_date or not end_date:
+            return Response({"error": "Both start_date and end_date parameters are required."},
                             status=status.HTTP_400_BAD_REQUEST)
 
-        sort_by = "time_created" if order == "asc" else "-time_created"
-        projects = Project.objects.all().order_by(sort_by)
+        try:
+            start_date = datetime.strptime(start_date, "%Y-%m-%d").date()
+            end_date = datetime.strptime(end_date, "%Y-%m-%d").date()
+        except ValueError:
+            return Response({"error": "Invalid date format. Use YYYY-MM-DD."},
+                            status=status.HTTP_400_BAD_REQUEST)
+
+
+        projects = Project.objects.filter(time_created__range=(start_date, end_date))
 
         serializer = ProjectSerializer(projects, many=True)
         return Response(serializer.data, status=status.HTTP_200_OK)
@@ -887,16 +920,19 @@ class TaskFilterView(generics.ListAPIView):
 
     GET:
     Параметры:
-    - ordering (str): Поле для сортировки ("title" для сортировки по названию). Возможны значения "title" и "-title".
+    - ordering (str): Поле для сортировки ("title" для сортировки по названию).
+      Возможны значения "title", "-title" и другие доступные поля.
 
     Ответы:
     - 200: Список отсортированных задач.
     """
 
-    queryset = Task.objects.all()
+    queryset = Task.objects.annotate(lower_title=Lower('title')).order_by('lower_title')
     serializer_class = TaskSerializer
-    filter_backends = (DjangoFilterBackend,)
+    filter_backends = (DjangoFilterBackend, OrderingFilter)
     filterset_class = TaskFilter
+    ordering_fields = ['title', 'created_at', 'updated_at', 'status', 'priority']
+    ordering = ['created_at']
 
 
 from .notifications.websocket_notifications import send_websocket_notification
