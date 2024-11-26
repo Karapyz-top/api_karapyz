@@ -124,25 +124,30 @@ python manage.py test
     └── avatars/ 
 ├── work/ 
     ├── main/ 
-        ├── notifications/
-            ├── consumers.py 
-            ├── email_notifications.py
-            ├── routing.py 
-            └── websocket_notifications.py 
-    ├── 
-    ├──
-    ├──
-    ├──
-    ├──
-├── tests/ - Содержит тесты проекта.
-├── .env-example - Конфигурация виртуального окружения.
-├── .gitlab-ci.yml - Конфигурация CI/CD для автоматизации тестов и развертывания на GitLab.
-├── docker-compose.yml - Конфигурация сервиса Elasticsearch. 
-├── DockerFile - Инструкции по созданию Docker-образа.
-├── manage.py - Скрипт управления Django-приложением.
-├── pytest.ini - Настройка pytest.
+         ├── notifications/ 
+            ├── consumers.py - Обработчик WebSocket-сообщений.
+            ├── routing.py - Маршрутизация для WebSocket-соединений.
+            └── websocket_notifications.py - Утилиты для работы с WebSocket-уведомлениями.
+         ├── __init__.py -  Инициализация пакета notifications.
+         ├── admin.py - Конфигурация панели администратора для приложения. 
+         ├── apps.py - Конфигурация основного приложения Django.
+         ├── auth.py - Обработка авторизации пользователей. 
+         ├── filter.py - Фильтры для работы с данными в запросах.
+         ├── models.py - Модели базы данных приложения.
+         ├── permissions.py - Управление правами доступа к API. 
+         ├── serializers.py - Сериализация и десериализация данных API.
+         ├── tests - Содержит тесты проекта.
+         ├── urls.py - URL маршруты приложения.
+         ├── views.py - Основная логика обработки API-запросов.
+    ├── work/
+         ├── __init__.py - Инициализация пакета work.
+         ├── asgi.py - Конфигурация для ASGI-сервера, поддерживающего асинхронные запросы и WebSocket.
+         ├── settings.py - Основные настройки Django-проекта, включая базы данных, установленные приложения и middleware.
+         ├── urls.py - Основные настройки Django-проекта, включая базы данных, установленные приложения и middleware.
+         ├── wsgi.py - Конфигурация для WSGI-сервера, используется для развертывания проекта в традиционных веб-серверах (например, Gunicorn).
+   ├── manage.py - Скрипт управления Django-приложением.
 ├── README.md - Документация проекта.
 ├── requirements.txt - Зависимости Python.
-└── ruff.toml - Конфигурация линтера.
+ 
 ```
 

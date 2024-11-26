@@ -1,7 +1,12 @@
 from django.urls import reverse
 from rest_framework import status
 from rest_framework.test import APITestCase
-from .models import Project, Task, UserAPI, ProjectParticipant, Comment
+from .models import Project, Task, UserAPI, Comment
+import os
+import django
+from django.conf import settings
+os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'work.settings')
+django.setup()
 
 
 class AuthTests(APITestCase):
@@ -110,7 +115,8 @@ class TaskTests(APITestCase):
         self.assertEqual(response.data['title'], self.task_data['title'])
 
     def test_update_task(self):
-        # Создаем задачу
+
+
         task = Task.objects.create(
             project=self.project,
             title=self.task_data['title'],
@@ -118,7 +124,8 @@ class TaskTests(APITestCase):
             status=self.task_data['status'],
             priority=self.task_data['priority']
         )
-        # Обновляем задачу
+
+
         update_data = {'title': 'Updated Task'}
         response = self.client.patch(
             reverse('task-update', kwargs={'pk': task.id}),
@@ -203,9 +210,9 @@ class CommentTests(APITestCase):
         self.assertEqual(response.data['content'], self.comment_data['content'])
 
     def test_update_comment(self):
-        # Создаем комментарий
+
         comment = Comment.objects.create(task=self.task, author=self.user, content='Original Comment')
-        # Обновляем комментарий
+
         update_data = {'content': 'Updated Comment'}
         response = self.client.put(
             reverse('comment-detail', kwargs={'task_id': self.task.id, 'pk': comment.id}),

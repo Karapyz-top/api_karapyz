@@ -69,7 +69,6 @@ class TaskSerializer(serializers.ModelSerializer):
                   'updated_at', 'deadline', 'testing_responsible', ]
 
 
-from rest_framework import serializers
 
 
 class CommentSerializer(serializers.ModelSerializer):

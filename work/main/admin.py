@@ -18,7 +18,4 @@ class ProjectAdmin(admin.ModelAdmin):
         return User.objects.filter(is_active=True)
 
 
-from django.contrib import admin
-from .models import Task
-
 admin.site.register(Task)

@@ -10,9 +10,6 @@ class ProjectFilter(filters.FilterSet):
         model = Project
         fields = ['title', 'time_created', 'time_updated']
 
-from django_filters import rest_framework as filters
-from .models import Task  # Убедитесь, что импортируете модель Task
-
 class TaskFilter(filters.FilterSet):
     status = filters.CharFilter(field_name='status', lookup_expr='exact')
     priority = filters.CharFilter(field_name='priority', lookup_expr='exact')

@@ -21,7 +21,7 @@ def send_websocket_notification(user_id, message):
                 "message": {
                     "message": message
                 },
-            }
+            },
         )
         print("Сообщение успешно отправлено!")
     except Exception as e:

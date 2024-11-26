@@ -1,5 +1,6 @@
 from datetime import datetime
 from django.db.models.functions import Lower
+from django_filters import FilterSet
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework.generics import get_object_or_404
@@ -17,6 +18,10 @@ from rest_framework.filters import OrderingFilter
 from django_filters.rest_framework import DjangoFilterBackend
 from .serializers import TaskSerializer
 from django.db.models import Q
+from .notifications.websocket_notifications import send_websocket_notification
+
+
+
 
 @api_view(['GET', 'POST'])
 @permission_classes([IsAuthenticated])
@@ -47,10 +52,9 @@ def project_list_create(request):
         data['participants'] = [request.user.id]
 
         serializer = ProjectSerializer(data=data)
-        if serializer.is_valid():
-            serializer.save()
-            return Response(serializer.data, status=status.HTTP_201_CREATED)
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        return Response(serializer.data, status=status.HTTP_201_CREATED)
 
 
 @api_view(['GET'])
@@ -89,7 +93,7 @@ class ProjectTaskListView(APIView):
         tasks = Task.objects.filter(project_id=pk)
 
         if not tasks.exists():
-            return Response({"message": "No tasks found for this project."}, status=status.HTTP_200_OK)
+            return Response({"message": "No tasks found for this project."}, status=status.HTTP_404_NOT_FOUND)
 
         serializer = TaskSerializer(tasks, many=True)
         return Response(serializer.data, status=status.HTTP_200_OK)
@@ -135,21 +139,17 @@ def project_update(request, pk):
     - 400: Ошибка валидации.
     """
 
-    try:
-        project = Project.objects.get(pk=pk)
-    except Project.DoesNotExist:
-        return Response({'detail': 'Project not found'}, status=status.HTTP_404_NOT_FOUND)
+    project = get_object_or_404(Project, pk=pk)
     data = request.data
 
     if 'owner' in data:
         del data['owner']
     serializer = ProjectSerializer(project, data=data, partial=True)
 
-    if serializer.is_valid():
-        serializer.save()
-        return Response(serializer.data)
-    else:
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+    serializer.is_valid(raise_exception=True)
+    serializer.save()
+    return Response(serializer.data)
+
 
 
 @api_view(['DELETE'])
@@ -192,27 +192,22 @@ def add_participant(request, project_id):
     - 403: Только владелец может добавлять участников.
     """
 
-    try:
-        project = Project.objects.get(id=project_id)
-    except Project.DoesNotExist:
-        return Response({'error': 'Project does not exist.'}, status=status.HTTP_404_NOT_FOUND)
+    project = get_object_or_404(Project, pk=project_id)
 
     if request.user != project.owner:
         return Response({'error': 'Only the owner can add participants.'}, status=status.HTTP_403_FORBIDDEN)
 
     serializer = ProjectParticipantSerializer(data=request.data)
-    if serializer.is_valid():
-        participant = serializer.save(project=project)
-        print(f"Добавление участника с user_id={participant.user.id}")
+    serializer.is_valid(raise_exception=True)
+    participant = serializer.save(project=project)
+    print(f"Добавление участника с user_id={participant.user.id}")
 
-        send_websocket_notification(
-            user_id=participant.user.id,
-            message=f"Вы были добавлены в проект '{project.title}'."
-        )
+    send_websocket_notification(
+        user_id=participant.user.id,
+        message=f"Вы были добавлены в проект '{project.title}'."
+    )
 
-        return Response(serializer.data, status=status.HTTP_201_CREATED)
-    return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-
+    return Response(serializer.data, status=status.HTTP_201_CREATED)
 
 
 @api_view(['PATCH'])
@@ -230,7 +225,6 @@ def assign_user_to_task(request, task_id):
     task.assigned_to = user
     task.save()
 
-
     channel_layer = get_channel_layer()
     async_to_sync(channel_layer.group_send)(
         f"user_{user_id}",
@@ -242,6 +236,7 @@ def assign_user_to_task(request, task_id):
 
     serializer = TaskSerializer(task)
     return Response(serializer.data, status=status.HTTP_200_OK)
+
 
 @api_view(['DELETE'])
 @permission_classes([IsAuthenticated])
@@ -259,20 +254,14 @@ def remove_participant(request, project_id, user_id):
     - 404: Проект или участник не найдены.
     """
 
-    try:
-        project = Project.objects.get(id=project_id)
-    except Project.DoesNotExist:
-        return Response({'error': 'Project does not exist.'}, status=status.HTTP_404_NOT_FOUND)
+    project = get_object_or_404(Project, pk=project_id)
 
     if request.user != project.owner:
         return Response({'error': 'Only the owner can remove participants.'}, status=status.HTTP_403_FORBIDDEN)
 
-    try:
-        participant = ProjectParticipant.objects.get(project=project, user_id=user_id)
-        participant.delete()
-        return Response({'message': 'Participant removed.'}, status=status.HTTP_204_NO_CONTENT)
-    except ProjectParticipant.DoesNotExist:
-        return Response({'error': 'Participant not found.'}, status=status.HTTP_404_NOT_FOUND)
+    participant = get_object_or_404(ProjectParticipant, project=project, user_id=user_id)
+    participant.delete()
+    return Response({'message': 'Participant removed.'}, status=status.HTTP_204_NO_CONTENT)
 
 
 @api_view(['PATCH'])
@@ -295,24 +284,17 @@ def update_participant_role(request, project_id, user_id):
     - 404: Проект или участник не найдены.
     """
 
-    try:
-        project = Project.objects.get(id=project_id)
-    except Project.DoesNotExist:
-        return Response({'error': 'Project does not exist.'}, status=status.HTTP_404_NOT_FOUND)
+    project = get_object_or_404(Project, pk=project_id)
 
     if request.user != project.owner:
         return Response({'error': 'Only the owner can update roles.'}, status=status.HTTP_403_FORBIDDEN)
 
-    try:
-        participant = ProjectParticipant.objects.get(project=project, user_id=user_id)
-    except ProjectParticipant.DoesNotExist:
-        return Response({'error': 'Participant not found.'}, status=status.HTTP_404_NOT_FOUND)
+    participant = get_object_or_404(ProjectParticipant, project=project, user_id=user_id)
 
     serializer = ProjectParticipantSerializer(participant, data=request.data, partial=True)
-    if serializer.is_valid():
-        serializer.save()
-        return Response(serializer.data, status=status.HTTP_200_OK)
-    return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+    serializer.is_valid(raise_exception=True)
+    serializer.save()
+    return Response(serializer.data, status=status.HTTP_200_OK)
 
 
 @api_view(['GET', 'POST'])
@@ -349,19 +331,15 @@ def task_list_create(request):
         if not project_id:
             return Response({"error": "Project ID is required."}, status=status.HTTP_400_BAD_REQUEST)
 
-        try:
-            project = Project.objects.get(id=project_id)
-        except Project.DoesNotExist:
-            return Response({"error": "Project does not exist."}, status=status.HTTP_404_NOT_FOUND)
+        project = get_object_or_404(Project, pk=project_id)
 
         if request.user not in project.participants.all():
             return Response({"error": "You are not a participant of this project."}, status=status.HTTP_403_FORBIDDEN)
 
         serializer = TaskSerializer(data=request.data)
-        if serializer.is_valid():
-            serializer.save()
-            return Response(serializer.data, status=status.HTTP_201_CREATED)
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        return Response(serializer.data, status=status.HTTP_201_CREATED)
 
 
 @api_view(['GET'])
@@ -423,16 +401,14 @@ def task_update(request, pk):
     task = get_object_or_404(Task, pk=pk)
     if request.method in ['PUT', 'PATCH']:
         serializer = TaskSerializer(task, data=request.data, partial=(request.method == 'PATCH'))
-        if serializer.is_valid():
-            updated_task = serializer.save()
+        serializer.is_valid(raise_exception=True)
+        updated_task = serializer.save()
+        send_websocket_notification(
+            user_id=updated_task.assigned_to,
+            message=f"Статус задачи '{updated_task.title}' был изменен на '{updated_task.status}'."
+        )
 
-            send_websocket_notification(
-                user_id=updated_task.assigned_to,
-                message=f"Статус задачи '{updated_task.title}' был изменен на '{updated_task.status}'."
-            )
-
-            return Response(serializer.data, status=status.HTTP_200_OK)
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        return Response(serializer.data, status=status.HTTP_200_OK)
 
 
 @api_view(['DELETE'])
@@ -497,10 +473,10 @@ def profile_view(request):
 
     if request.method == 'PUT':
         serializer = ProfileUpdateSerializer(user, data=request.data, partial=True)
-        if serializer.is_valid():
-            serializer.save()
-            return Response(serializer.data, status=status.HTTP_200_OK)
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
 
 
 @api_view(['POST'])
@@ -612,6 +588,7 @@ def log_out_user(request):
             status=status.HTTP_400_BAD_REQUEST
         )
 
+
 @api_view(['GET', 'POST'])
 @permission_classes([IsAuthenticated])
 def comment_list_create(request, task_id):
@@ -635,33 +612,28 @@ def comment_list_create(request, task_id):
     - 400: Ошибка валидации данных.
     - 404: Указанная задача не найдена.
     """
-    try:
-        task = Task.objects.get(id=task_id)
-    except Task.DoesNotExist:
-        return Response({'error': 'Task not found'}, status=status.HTTP_404_NOT_FOUND)
+    task = get_object_or_404(Task, id=task_id)
 
     if request.method == 'POST':
         data = request.data
         data['task'] = task_id
         serializer = CommentSerializer(data=data, context={'request': request})
-        if serializer.is_valid():
-            comment = serializer.save(author=request.user)
+        serializer.is_valid(raise_exception=True)
+        comment = serializer.save(author=request.user)
 
-            if task.assigned_to:
-                send_websocket_notification(
-                    user_id=task.assigned_to.id,
-                    message=f"Комментарий добавлен к задаче '{task.title}': {comment.content}"
-                )
-
+        if task.assigned_to:
+            send_websocket_notification(
+                user_id=task.assigned_to.id,
+                message=f"Комментарий добавлен к задаче '{task.title}': {comment.content}"
+            )
 
             return Response(serializer.data, status=status.HTTP_201_CREATED)
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
 
     elif request.method == 'GET':
         comments = Comment.objects.filter(task=task)
         serializer = CommentSerializer(comments, many=True)
         return Response(serializer.data, status=status.HTTP_200_OK)
-
 
 
 @api_view(['DELETE'])
@@ -672,7 +644,6 @@ def unassign_user_from_task(request, pk):
 
     task = get_object_or_404(Task, pk=pk)
 
-
     if not task.assigned_to:
         return Response(
             {"error": "У задачи нет назначенного пользователя."},
@@ -681,10 +652,8 @@ def unassign_user_from_task(request, pk):
 
     user_id = task.assigned_to.id
 
-
     task.assigned_to = None
     task.save()
-
 
     send_websocket_notification(
         user_id=user_id,
@@ -692,9 +661,9 @@ def unassign_user_from_task(request, pk):
     )
     print(f"WebSocket уведомление отправлено для user_id={user_id}: Пользователь удалён из задачи '{task.title}'.")
 
-
     serializer = TaskSerializer(task)
     return Response(serializer.data, status=status.HTTP_200_OK)
+
 
 @api_view(['PUT', 'DELETE'])
 @permission_classes([IsAuthenticated])
@@ -716,21 +685,16 @@ def comment_detail(request, task_id, pk):
     - 200: Комментарий успешно обновлен.
     - 204: Комментарий успешно удален.
     """
-
-    try:
-
-        comment = Comment.objects.get(pk=pk, task_id=task_id)
-    except Comment.DoesNotExist:
-        return Response({'error': 'Comment not found'}, status=status.HTTP_404_NOT_FOUND)
+    comment = get_object_or_404(Comment, pk=pk, task_id=task_id)
 
     if request.method == 'PUT':
         if comment.author != request.user:
             return Response({'error': 'Permission denied'}, status=status.HTTP_403_FORBIDDEN)
         serializer = CommentSerializer(comment, data=request.data, partial=True)
-        if serializer.is_valid():
-            serializer.save()
-            return Response(serializer.data, status=status.HTTP_200_OK)
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
 
     if request.method == 'DELETE':
         if comment.author != request.user:
@@ -770,7 +734,6 @@ class ProjectSymbolFilterView(APIView):
         return Response(serializer.data, status=status.HTTP_200_OK)
 
 
-
 class ProjectTaskFilterView(APIView):
     """
     Фильтрация задач проекта по дате создания, обновления или дедлайну с сортировкой.
@@ -789,13 +752,12 @@ class ProjectTaskFilterView(APIView):
     """
 
     def get(self, request, project_id, *args, **kwargs):
-        # Получение параметров фильтрации
+
         filter_by = request.query_params.get('filter_by', 'created')
         start_date = request.query_params.get('start_date')
         end_date = request.query_params.get('end_date')
         order = request.query_params.get('order', 'asc')
 
-        # Проверка корректности параметров
         if filter_by not in ['created', 'updated', 'deadline']:
             return Response(
                 {"error": "Invalid filter_by parameter. Use 'created', 'updated', or 'deadline'."},
@@ -812,7 +774,6 @@ class ProjectTaskFilterView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        # Преобразование дат в объект datetime
         try:
             start_date = datetime.strptime(start_date, "%Y-%m-%d").date()
             end_date = datetime.strptime(end_date, "%Y-%m-%d").date()
@@ -822,7 +783,6 @@ class ProjectTaskFilterView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        # Карта для полей сортировки
         field_map = {
             'created': 'created_at',
             'updated': 'updated_at',
@@ -830,19 +790,14 @@ class ProjectTaskFilterView(APIView):
         }
         filter_field = field_map.get(filter_by)
 
-        # Направление сортировки
         sort_order = '' if order == 'asc' else '-'
 
-        # Фильтрация задач по проекту, дате и сортировке
         tasks = Task.objects.filter(
             Q(project_id=project_id) & Q(**{f"{filter_field}__range": (start_date, end_date)})
         ).order_by(f"{sort_order}{filter_field}")
 
-        # Сериализация и отправка ответа
         serializer = TaskSerializer(tasks, many=True)
         return Response(serializer.data, status=status.HTTP_200_OK)
-
-
 
 
 class ProjectDateRangeFilterView(APIView):
@@ -863,8 +818,6 @@ class ProjectDateRangeFilterView(APIView):
         start_date = request.query_params.get('start_date')
         end_date = request.query_params.get('end_date')
 
-
-
         if not start_date or not end_date:
             return Response({"error": "Both start_date and end_date parameters are required."},
                             status=status.HTTP_400_BAD_REQUEST)
@@ -876,14 +829,13 @@ class ProjectDateRangeFilterView(APIView):
             return Response({"error": "Invalid date format. Use YYYY-MM-DD."},
                             status=status.HTTP_400_BAD_REQUEST)
 
-
         projects = Project.objects.filter(time_created__range=(start_date, end_date))
 
         serializer = ProjectSerializer(projects, many=True)
         return Response(serializer.data, status=status.HTTP_200_OK)
 
 
-from django_filters import FilterSet
+
 
 
 class TaskFilter(FilterSet):
@@ -911,7 +863,6 @@ class TaskFilter(FilterSet):
         }
 
 
-from django.db.models import Func, F
 
 
 class TaskFilterView(generics.ListAPIView):
@@ -935,7 +886,7 @@ class TaskFilterView(generics.ListAPIView):
     ordering = ['created_at']
 
 
-from .notifications.websocket_notifications import send_websocket_notification
+
 
 
 def assign_to_project(user_id, project_id):
@@ -974,7 +925,4 @@ def add_comment(user_id, task_id, comment_text):
         user_id=user_id,
         message=f"Комментарий к задаче с ID {task_id}: {comment_text}"
     )
-
-
-from django.http import JsonResponse
 

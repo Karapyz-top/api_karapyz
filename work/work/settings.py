@@ -35,7 +35,7 @@ INSTALLED_APPS = [
     'django.contrib.sessions',
     'django.contrib.messages',
     'django.contrib.staticfiles',
-    'main',
+    'main.apps.MainConfig',
     'rest_framework',
     'rest_framework.authtoken',
     'rest_framework_simplejwt',
@@ -84,7 +84,7 @@ WSGI_APPLICATION = 'work.wsgi.application'
 # Database
 # https://docs.djangoproject.com/en/5.1/ref/settings/#databases
 
-import os
+
 
 DATABASES = {
     'default': {
@@ -106,11 +106,6 @@ CHANNEL_LAYERS = {
     },
 }
 
-STATICFILES_DIRS = [
-    "C:/Users/Artem/PycharmProjects/project_jeny/work/static",
-]
-
-STATIC_ROOT = BASE_DIR / "staticfiles"
 
 # Password validation
 # https://docs.djangoproject.com/en/5.1/ref/settings/#auth-password-validators
