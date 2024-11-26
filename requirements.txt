@@ -1,0 +1,7 @@
+Django==4.2
+djangorestframework==3.14
+psycopg2-binary==2.9.6
+channels==4.0
+websockets==11.0
+gunicorn
+drf-spectacular
